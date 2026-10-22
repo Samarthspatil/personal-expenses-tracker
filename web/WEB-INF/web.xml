@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.0">
+  <servlet>
+    <servlet-name>MonthlyReportServlet</servlet-name>
+    <servlet-class>spendwise.web.MonthlyReportServlet</servlet-class>
+  </servlet>
+  <servlet-mapping>
+    <servlet-name>MonthlyReportServlet</servlet-name>
+    <url-pattern>/monthly-report</url-pattern>
+  </servlet-mapping>
+</web-app>

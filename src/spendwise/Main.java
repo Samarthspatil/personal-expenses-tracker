@@ -1,22 +1,20 @@
 package spendwise;
 
-import spendwise.storage.FileBudgetRepository;
-import spendwise.storage.FileExpenseRepository;
 import spendwise.ui.MainFrame;
-import javax.swing.SwingUtilities;
-import javax.swing.UIManager;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.awt.EventQueue;
 
 public final class Main {
     private Main() {}
-
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
-            catch (Exception ignored) { }
-            Path dataDirectory = Paths.get(System.getProperty("user.home"), "SpendWiseData");
-            new MainFrame(new FileExpenseRepository(dataDirectory), new FileBudgetRepository(dataDirectory)).setVisible(true);
+        EventQueue.invokeLater(new Runnable() {
+            public void run() {
+                try {
+                    MainFrame frame = new MainFrame();
+                    frame.setVisible(true);
+                } catch (RuntimeException exception) {
+                    System.err.println("SpendWise could not start: " + exception.getMessage());
+                }
+            }
         });
     }
 }

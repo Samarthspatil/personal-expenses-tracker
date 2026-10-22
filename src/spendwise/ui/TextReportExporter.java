@@ -15,7 +15,8 @@ public final class TextReportExporter implements ReportExporter {
             total = total.add(expense.getAmount());
             result.append(expense.getDate()).append(" | ").append(expense.getCategory())
                     .append(" | ").append(expense.getNote()).append(" | ")
-                    .append(UiUtil.plainMoney(expense.getAmount())).append("\n");
+                    .append(UiUtil.plainMoney(expense.getAmount())).append(" | essential=")
+                    .append(expense.isEssential()).append(" | payment=").append(expense.getPaymentMethod()).append("\n");
         }
         result.append("\nTotal spending: ").append(UiUtil.plainMoney(total)).append("\n");
         result.append("Budget: ").append(budget == null ? "Budget not set" : UiUtil.plainMoney(budget.getAmount())).append("\n");

@@ -5,98 +5,109 @@ import spendwise.model.Expense;
 import spendwise.service.ValidationException;
 import spendwise.service.ValidationService;
 import java.awt.BorderLayout;
-import java.awt.GridBagConstraints;
-import java.awt.GridBagLayout;
-import java.awt.Insets;
+import java.awt.Button;
+import java.awt.Choice;
+import java.awt.Checkbox;
+import java.awt.CheckboxGroup;
+import java.awt.Dialog;
+import java.awt.FlowLayout;
+import java.awt.Frame;
+import java.awt.GridLayout;
+import java.awt.Label;
+import java.awt.Panel;
+import java.awt.TextArea;
+import java.awt.TextField;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.time.LocalDate;
 import java.util.UUID;
-import javax.swing.BorderFactory;
-import javax.swing.ButtonGroup;
-import javax.swing.JButton;
-import javax.swing.JComboBox;
-import javax.swing.JDialog;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.JTextField;
+import spendwise.model.PaymentMethod;
 
-public final class ExpenseDialog extends JDialog {
-    private final JTextField amountField = new JTextField(18);
-    private final JComboBox<Category> categoryBox = new JComboBox<>(Category.values());
-    private final JTextField dateField = new JTextField(18);
-    private final JTextField noteField = new JTextField(18);
-    private Expense result;
+public final class ExpenseDialog extends Dialog {
+    private final TextField amount = new TextField();
+    private final Choice category = new Choice();
+    private final TextField day = new TextField();
+    private final TextField month = new TextField();
+    private final TextField year = new TextField();
+    private final TextArea note = new TextArea("", 4, 28, TextArea.SCROLLBARS_VERTICAL_ONLY);
+    private final Checkbox essential = new Checkbox("Essential expense");
+    private final CheckboxGroup paymentGroup = new CheckboxGroup();
+    private final Checkbox cash = new Checkbox("Cash", paymentGroup, false);
+    private final Checkbox upi = new Checkbox("UPI", paymentGroup, false);
+    private final Checkbox card = new Checkbox("Card", paymentGroup, false);
+    private final Label error = new Label(" ");
     private final UUID editingId;
+    private Expense result;
 
-    public ExpenseDialog(java.awt.Frame owner, Expense existing) {
+    public ExpenseDialog(Frame owner, Expense existing) {
         super(owner, existing == null ? "Add Expense" : "Edit Expense", true);
         editingId = existing == null ? null : existing.getId();
-        build(existing);
-    }
-
-    private void build(Expense existing) {
-        JPanel form = new JPanel(new GridBagLayout());
-        form.setBorder(BorderFactory.createEmptyBorder(16, 16, 8, 16));
-        addRow(form, 0, "Amount (INR):", amountField);
-        addRow(form, 1, "Category:", categoryBox);
-        addRow(form, 2, "Date:", dateField);
-        addRow(form, 3, "Note (optional):", noteField);
-        JLabel hint = new JLabel("Expected date format: dd/MM/yyyy");
-        GridBagConstraints hintC = constraints(4);
-        hintC.gridwidth = 2;
-        form.add(hint, hintC);
-        if (existing == null) {
-            dateField.setText(ValidationService.DATE_FORMAT.format(LocalDate.now()));
-        } else {
-            amountField.setText(existing.getAmount().toPlainString());
-            categoryBox.setSelectedItem(existing.getCategory());
-            dateField.setText(ValidationService.DATE_FORMAT.format(existing.getDate()));
-            noteField.setText(existing.getNote());
-        }
-        JButton save = new JButton("Save");
-        JButton cancel = new JButton("Cancel");
-        save.addActionListener(e -> save());
-        cancel.addActionListener(e -> dispose());
-        JPanel buttons = new JPanel();
-        buttons.add(save);
-        buttons.add(cancel);
-        add(form, BorderLayout.CENTER);
+        setLayout(new BorderLayout(8, 8));
+        Panel fields = new Panel(new GridLayout(8, 2, 6, 6));
+        fields.add(new Label("Amount in INR:")); fields.add(amount);
+        fields.add(new Label("Category:"));
+        for (Category value : Category.values()) category.add(value.getDisplayName());
+        fields.add(category);
+        fields.add(new Label("Day:")); fields.add(day);
+        fields.add(new Label("Month:")); fields.add(month);
+        fields.add(new Label("Year:")); fields.add(year);
+        fields.add(new Label("Note:")); fields.add(note);
+        fields.add(new Label("")); fields.add(essential);
+        Panel payments = new Panel(new FlowLayout(FlowLayout.LEFT));
+        payments.add(cash); payments.add(upi); payments.add(card);
+        fields.add(new Label("Payment method:")); fields.add(payments);
+        add(fields, BorderLayout.CENTER);
+        error.setForeground(java.awt.Color.RED); add(error, BorderLayout.NORTH);
+        Panel buttons = new Panel(new FlowLayout()); Button save = new Button("Save"); Button cancel = new Button("Cancel");
+        save.addActionListener(new java.awt.event.ActionListener() { public void actionPerformed(java.awt.event.ActionEvent e) { save(); }});
+        cancel.addActionListener(new java.awt.event.ActionListener() { public void actionPerformed(java.awt.event.ActionEvent e) { dispose(); }});
+        buttons.add(save); buttons.add(cancel);
         add(buttons, BorderLayout.SOUTH);
-        getRootPane().setDefaultButton(save);
-        pack();
-        setLocationRelativeTo(getOwner());
+        LocalDate date = existing == null ? LocalDate.now() : existing.getDate();
+        amount.setText(existing == null ? "" : existing.getAmount().toPlainString());
+        category.select(existing == null ? Category.OTHER.getDisplayName() : existing.getCategory().getDisplayName());
+        if (existing == null || existing.getPaymentMethod() == PaymentMethod.UNSPECIFIED) {
+            cash.setState(false); upi.setState(false); card.setState(false);
+        } else if (existing.getPaymentMethod() == PaymentMethod.CASH) cash.setState(true);
+        else if (existing.getPaymentMethod() == PaymentMethod.UPI) upi.setState(true);
+        else card.setState(true);
+        if (existing != null) essential.setState(existing.isEssential());
+        day.setText(Integer.toString(date.getDayOfMonth())); month.setText(Integer.toString(date.getMonthValue()));
+        year.setText(Integer.toString(date.getYear())); if (existing != null) note.setText(existing.getNote());
+        addWindowListener(new WindowAdapter() { public void windowClosing(WindowEvent e) { dispose(); }});
+        addKeyListener(new KeyAdapter() {
+            public void keyPressed(KeyEvent event) {
+                if (event.getKeyCode() == KeyEvent.VK_ESCAPE) dispose();
+            }
+        });
+        amount.addKeyListener(new KeyAdapter() {
+            public void keyPressed(KeyEvent event) {
+                if (event.getKeyCode() == KeyEvent.VK_ESCAPE) dispose();
+            }
+        });
+        day.addKeyListener(new KeyAdapter() { public void keyPressed(KeyEvent event) { if (event.getKeyCode() == KeyEvent.VK_ESCAPE) dispose(); }});
+        month.addKeyListener(new KeyAdapter() { public void keyPressed(KeyEvent event) { if (event.getKeyCode() == KeyEvent.VK_ESCAPE) dispose(); }});
+        year.addKeyListener(new KeyAdapter() { public void keyPressed(KeyEvent event) { if (event.getKeyCode() == KeyEvent.VK_ESCAPE) dispose(); }});
+        note.addKeyListener(new KeyAdapter() { public void keyPressed(KeyEvent event) { if (event.getKeyCode() == KeyEvent.VK_ESCAPE) dispose(); }});
+        setSize(430, 350); setLocationRelativeTo(owner);
     }
-
-    private GridBagConstraints constraints(int row) {
-        GridBagConstraints c = new GridBagConstraints();
-        c.gridx = 0; c.gridy = row; c.anchor = GridBagConstraints.WEST;
-        c.insets = new Insets(5, 5, 5, 10);
-        return c;
-    }
-
-    private void addRow(JPanel panel, int row, String label, java.awt.Component field) {
-        GridBagConstraints labelC = constraints(row);
-        panel.add(new JLabel(label), labelC);
-        GridBagConstraints fieldC = constraints(row);
-        fieldC.gridx = 1; fieldC.fill = GridBagConstraints.HORIZONTAL; fieldC.weightx = 1;
-        panel.add(field, fieldC);
-    }
-
     private void save() {
         try {
-            java.math.BigDecimal amount = ValidationService.parseAmount(amountField.getText(), "Amount");
-            LocalDate date = ValidationService.parseExpenseDate(dateField.getText());
-            Category category = (Category) categoryBox.getSelectedItem();
-            result = new Expense(editingId == null ? UUID.randomUUID() : editingId,
-                    amount, category, date, noteField.getText().trim());
+            java.math.BigDecimal value = ValidationService.parseAmount(amount.getText(), "Amount");
+            LocalDate date = LocalDate.of(Integer.parseInt(year.getText().trim()), Integer.parseInt(month.getText().trim()),
+                    Integer.parseInt(day.getText().trim()));
+            if (date.isAfter(LocalDate.now())) throw new ValidationException("Date cannot be in the future.");
+            Category selected = Category.fromDisplayName(category.getSelectedItem());
+            PaymentMethod method = PaymentMethod.UNSPECIFIED;
+            if (cash.getState()) method = PaymentMethod.CASH;
+            else if (upi.getState()) method = PaymentMethod.UPI;
+            else if (card.getState()) method = PaymentMethod.CARD;
+            result = new Expense(editingId == null ? UUID.randomUUID() : editingId, value, selected, date,
+                    note.getText().trim(), essential.getState(), method);
             dispose();
-        } catch (ValidationException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Please correct the form",
-                    JOptionPane.ERROR_MESSAGE);
-        }
+        } catch (Exception exception) { error.setText(exception.getMessage() == null ? "Invalid form values." : exception.getMessage()); }
     }
-
-    public Expense getResult() {
-        return result;
-    }
+    public Expense getResult() { return result; }
 }

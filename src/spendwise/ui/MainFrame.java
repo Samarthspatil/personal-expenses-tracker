@@ -5,15 +5,26 @@ import spendwise.model.Expense;
 import spendwise.storage.BudgetRepository;
 import spendwise.storage.ExpenseRepository;
 import java.awt.BorderLayout;
+import java.awt.Button;
 import java.awt.CardLayout;
 import java.awt.Color;
-import java.awt.Cursor;
-import java.awt.Dimension;
+import java.awt.Dialog;
+import java.awt.EventQueue;
+import java.awt.FileDialog;
 import java.awt.FlowLayout;
+import java.awt.Frame;
 import java.awt.GridLayout;
+import java.awt.Label;
+import java.awt.Menu;
+import java.awt.MenuBar;
+import java.awt.MenuItem;
+import java.awt.Panel;
+import java.awt.TextArea;
+import java.awt.ScrollPane;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -24,293 +35,343 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
-import javax.swing.BorderFactory;
-import javax.swing.JButton;
-import javax.swing.JFileChooser;
-import javax.swing.JFrame;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.SwingWorker;
 
-public final class MainFrame extends JFrame {
+public final class MainFrame extends Frame {
     private final ExpenseRepository expenseRepository;
     private final BudgetRepository budgetRepository;
-    private final List<Expense> expenses = new ArrayList<>();
-    private final List<Budget> budgets = new ArrayList<>();
+    private final List<Expense> expenses = new ArrayList<Expense>();
+    private final List<Budget> budgets = new ArrayList<Budget>();
     private final CardLayout cards = new CardLayout();
-    private final JPanel cardPanel = new JPanel(cards);
-    private final DashboardPanel dashboardPanel;
+    private final Panel content = new Panel(cards);
+    private final Label status = new Label("Loading saved data...");
+    private final DashboardPanel dashboard;
     private final ExpensesPanel expensesPanel;
     private final BudgetPanel budgetPanel;
     private final ReportsPanel reportsPanel;
-    private final List<JButton> navigationButtons = new ArrayList<>();
     private Expense lastDeleted;
-    private boolean saving;
+    private boolean busy;
+    private boolean loadFailed;
+
+    public MainFrame() {
+        this(defaultExpenseRepository(), defaultBudgetRepository());
+    }
 
     public MainFrame(ExpenseRepository expenseRepository, BudgetRepository budgetRepository) {
-        super("SpendWise — Personal Expense Tracker");
-        this.expenseRepository = expenseRepository; this.budgetRepository = budgetRepository;
-        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        setMinimumSize(new Dimension(900, 600)); setSize(1100, 700); setLocationRelativeTo(null);
-        dashboardPanel = new DashboardPanel(this);
+        super("SpendWise - Personal Expense Tracker");
+        this.expenseRepository = expenseRepository;
+        this.budgetRepository = budgetRepository;
+        setLayout(new BorderLayout(8, 8));
+        setBackground(UiUtil.LIGHT);
+        setSize(1000, 700);
+        setMinimumSize(new java.awt.Dimension(850, 600));
+        dashboard = new DashboardPanel(this);
         expensesPanel = new ExpensesPanel(this);
         budgetPanel = new BudgetPanel(this);
         reportsPanel = new ReportsPanel(this);
-        cardPanel.add(dashboardPanel, "Dashboard"); cardPanel.add(expensesPanel, "Expenses");
-        cardPanel.add(budgetPanel, "Budgets"); cardPanel.add(reportsPanel, "Reports");
-        add(createNavigation(), BorderLayout.WEST); add(cardPanel, BorderLayout.CENTER);
-        setJMenuBar(createMenuBar());
+        ScrollPane dashboardScroll = new ScrollPane();
+        dashboardScroll.add(dashboard);
+        content.add(dashboardScroll, "Dashboard");
+        content.add(expensesPanel, "Expenses");
+        content.add(budgetPanel, "Budgets");
+        content.add(reportsPanel, "Reports");
+        add(createHeader(), BorderLayout.NORTH);
+        add(createNavigation(), BorderLayout.WEST);
+        add(content, BorderLayout.CENTER);
+        add(status, BorderLayout.SOUTH);
+        setMenuBar(createMenuBar());
         addWindowListener(new WindowAdapter() {
-            public void windowClosing(WindowEvent e) {
-                if (saving) JOptionPane.showMessageDialog(MainFrame.this, "Please wait for saving to finish.");
+            public void windowClosing(WindowEvent event) {
+                if (busy) Dialogs.message(MainFrame.this, "Please wait until the current file operation finishes.", "Save pending");
                 else dispose();
             }
         });
         loadData();
     }
 
-    private JPanel createNavigation() {
-        JPanel nav = new JPanel(new GridLayout(5, 1, 4, 4));
-        nav.setBorder(BorderFactory.createEmptyBorder(18, 12, 18, 12)); nav.setBackground(UiUtil.NAVY);
-        nav.setPreferredSize(new Dimension(170, 0));
-        JLabel title = new JLabel("<html><font color='white'><b>SpendWise</b><br>Expense tracker</font></html>");
-        nav.add(title);
-        for (String name : new String[]{"Dashboard", "Expenses", "Budgets", "Reports"}) {
-            JButton button = new JButton(name); button.setFocusPainted(false);
-            button.addActionListener(e -> {
-                cards.show(cardPanel, name);
-                for (JButton other : navigationButtons) other.setBackground(null);
-                button.setBackground(UiUtil.TEAL);
-            });
-            navigationButtons.add(button); nav.add(button);
-        }
-        return nav;
+    private static ExpenseRepository defaultExpenseRepository() {
+        Path directory = Path.of(System.getProperty("user.home"), "SpendWiseData");
+        try { return new spendwise.storage.JdbcExpenseRepository(directory); }
+        catch (IOException exception) { throw new IllegalStateException("H2 database is unavailable.", exception); }
     }
 
-    private javax.swing.JMenuBar createMenuBar() {
-        javax.swing.JMenuBar bar = new javax.swing.JMenuBar();
-        javax.swing.JMenu file = new javax.swing.JMenu("File");
-        javax.swing.JMenuItem backup = new javax.swing.JMenuItem("Backup data...");
-        javax.swing.JMenuItem restore = new javax.swing.JMenuItem("Restore data...");
-        backup.addActionListener(e -> chooseBackup());
-        restore.addActionListener(e -> chooseRestore());
-        file.add(backup); file.add(restore); bar.add(file);
+    private static BudgetRepository defaultBudgetRepository() {
+        Path directory = Path.of(System.getProperty("user.home"), "SpendWiseData");
+        try { return new spendwise.storage.JdbcBudgetRepository(directory); }
+        catch (IOException exception) { throw new IllegalStateException("H2 database is unavailable.", exception); }
+    }
+
+    private Panel createHeader() {
+        Panel header = new Panel(new FlowLayout(FlowLayout.LEFT, 18, 10));
+        header.setBackground(UiUtil.NAVY);
+        Label title = new Label("SpendWise - Personal Expense Tracker");
+        title.setForeground(Color.WHITE);
+        title.setFont(UiUtil.HEADING);
+        header.add(title);
+        return header;
+    }
+
+    private Panel createNavigation() {
+        Panel navigation = new Panel(new GridLayout(5, 1, 5, 5));
+        navigation.setBackground(UiUtil.NAVY);
+        navigation.setPreferredSize(new java.awt.Dimension(150, 0));
+        Label logo = new Label("Navigation", Label.CENTER);
+        logo.setForeground(Color.WHITE);
+        navigation.add(logo);
+        String[] names = {"Dashboard", "Expenses", "Budgets", "Reports"};
+        for (final String name : names) {
+            Button button = new Button(name);
+            button.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent event) {
+                    cards.show(content, name);
+                    status.setText("Viewing " + name);
+                }
+            });
+            navigation.add(button);
+        }
+        return navigation;
+    }
+
+    private MenuBar createMenuBar() {
+        MenuBar bar = new MenuBar();
+        Menu file = new Menu("File");
+        MenuItem backup = new MenuItem("Backup data...");
+        MenuItem restore = new MenuItem("Restore data...");
+        MenuItem retryLoad = new MenuItem("Retry load");
+        backup.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e) { chooseBackup(); }});
+        restore.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e) { chooseRestore(); }});
+        retryLoad.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e) { loadData(); }});
+        file.add(backup); file.add(restore); file.add(retryLoad); bar.add(file);
         return bar;
     }
 
     private void loadData() {
-        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        new SwingWorker<Void, Void>() {
-            protected Void doInBackground() throws Exception {
-                expenses.addAll(expenseRepository.load()); budgets.addAll(budgetRepository.load()); return null;
+        busy = true;
+        new Thread(new Runnable() { public void run() {
+            try {
+                final List<Expense> loadedExpenses = expenseRepository.load();
+                final List<Budget> loadedBudgets = budgetRepository.load();
+                EventQueue.invokeLater(new Runnable() { public void run() {
+                    expenses.addAll(loadedExpenses);
+                    budgets.addAll(loadedBudgets);
+                    loadFailed = false; busy = false; refreshAll(); status.setText("Saved data loaded.");
+                }});
+            } catch (final Exception exception) {
+                EventQueue.invokeLater(new Runnable() { public void run() {
+                    busy = false;
+                    loadFailed = true;
+                    Dialogs.error(MainFrame.this, "Could not load saved data. Existing files were not changed.", exception);
+                }});
             }
-            protected void done() {
-                setCursor(Cursor.getDefaultCursor());
-                try { get(); refreshAll(); }
-                catch (Exception ex) { showError("Could not load saved data. Original files were not changed.", ex); }
-            }
-        }.execute();
+        }}, "SpendWise-load").start();
     }
 
-    public List<Expense> getExpenses() { return new ArrayList<>(expenses); }
-    public List<Budget> getBudgets() { return new ArrayList<>(budgets); }
+    public List<Expense> getExpenses() { return new ArrayList<Expense>(expenses); }
+    public List<Budget> getBudgets() { return new ArrayList<Budget>(budgets); }
     public Budget findBudget(YearMonth month) {
-        return budgets.stream().filter(b -> b.getMonth().equals(month)).findFirst().orElse(null);
+        for (Budget budget : budgets) if (budget.getMonth().equals(month)) return budget;
+        return null;
     }
-
-    public void addExpense(Expense expense) { expenses.add(expense); saveAll("Expense added."); }
+    public void addExpense(final Expense expense) {
+        List<Expense> proposed = getExpenses(); proposed.add(expense);
+        saveAll("Expense added.", proposed, getBudgets(), new Runnable() {
+            public void run() { expenses.add(expense); }
+        });
+    }
     public void updateExpense(Expense updated) {
-        for (int i = 0; i < expenses.size(); i++) if (expenses.get(i).getId().equals(updated.getId())) { expenses.set(i, updated); break; }
-        saveAll("Expense updated.");
+        List<Expense> proposed = getExpenses();
+        for (int i = 0; i < proposed.size(); i++) if (proposed.get(i).getId().equals(updated.getId())) proposed.set(i, updated);
+        saveAll("Expense updated.", proposed, getBudgets(), new Runnable() {
+            public void run() {
+                for (int i = 0; i < expenses.size(); i++) if (expenses.get(i).getId().equals(updated.getId())) expenses.set(i, updated);
+            }
+        });
     }
     public void deleteExpense(UUID id) {
-        for (Expense expense : expenses) {
-            if (expense.getId().equals(id)) { lastDeleted = expense; break; }
-        }
-        expenses.removeIf(e -> e.getId().equals(id)); saveAll("Expense deleted.");
+        final Expense deleted = findExpense(id);
+        if (deleted == null) return;
+        List<Expense> proposed = getExpenses();
+        for (int i = proposed.size() - 1; i >= 0; i--) if (proposed.get(i).getId().equals(id)) proposed.remove(i);
+        saveAll("Expense deleted.", proposed, getBudgets(), new Runnable() {
+            public void run() { expenses.remove(deleted); lastDeleted = deleted; }
+        });
     }
     public void undoLastDelete() {
-        if (lastDeleted == null) {
-            JOptionPane.showMessageDialog(this, "There is no deletion to undo.");
-            return;
-        }
-        boolean duplicate = false;
-        for (Expense expense : expenses) if (expense.getId().equals(lastDeleted.getId())) duplicate = true;
-        if (!duplicate) { expenses.add(lastDeleted); saveAll("Last deletion undone."); lastDeleted = null; }
+        if (lastDeleted == null) { Dialogs.message(this, "There is no deletion to undo.", "Undo"); return; }
+        for (Expense expense : expenses) if (expense.getId().equals(lastDeleted.getId())) return;
+        final Expense restored = lastDeleted;
+        List<Expense> proposed = getExpenses(); proposed.add(restored);
+        saveAll("Last deletion undone.", proposed, getBudgets(), new Runnable() {
+            public void run() { expenses.add(restored); lastDeleted = null; }
+        });
     }
     public void setBudget(Budget budget) {
-        budgets.removeIf(b -> b.getMonth().equals(budget.getMonth())); budgets.add(budget); saveAll("Budget saved.");
+        List<Budget> proposed = getBudgets();
+        for (int i = proposed.size() - 1; i >= 0; i--) if (proposed.get(i).getMonth().equals(budget.getMonth())) proposed.remove(i);
+        proposed.add(budget); saveAll("Budget saved.", getExpenses(), proposed, new Runnable() {
+            public void run() { replaceBudget(budget); }
+        });
     }
-    public void removeBudget(YearMonth month) { budgets.removeIf(b -> b.getMonth().equals(month)); saveAll("Budget removed."); }
-
-    private void saveAll(String successMessage) {
-        if (saving) { showError("A save is already in progress. Please wait and retry.", null); return; }
-        saving = true; setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        List<Expense> expenseSnapshot = getExpenses(); List<Budget> budgetSnapshot = new ArrayList<>(budgets);
-        new SwingWorker<Void, Void>() {
-            protected Void doInBackground() throws Exception { expenseRepository.save(expenseSnapshot); budgetRepository.save(budgetSnapshot); return null; }
-            protected void done() {
-                saving = false; setCursor(Cursor.getDefaultCursor());
-                try { get(); refreshAll(); JOptionPane.showMessageDialog(MainFrame.this, successMessage); }
-                catch (Exception ex) { showError("Save failed. Your in-memory changes remain; please retry.", ex); }
+    public void removeBudget(YearMonth month) {
+        List<Budget> proposed = getBudgets();
+        for (int i = proposed.size() - 1; i >= 0; i--) if (proposed.get(i).getMonth().equals(month)) proposed.remove(i);
+        saveAll("Budget removed.", getExpenses(), proposed, new Runnable() {
+            public void run() {
+                for (int i = budgets.size() - 1; i >= 0; i--) if (budgets.get(i).getMonth().equals(month)) budgets.remove(i);
             }
-        }.execute();
+        });
+    }
+
+    private Expense findExpense(UUID id) {
+        for (Expense expense : expenses) if (expense.getId().equals(id)) return expense;
+        return null;
+    }
+
+    private void replaceBudget(Budget budget) {
+        for (int i = budgets.size() - 1; i >= 0; i--) if (budgets.get(i).getMonth().equals(budget.getMonth())) budgets.remove(i);
+        budgets.add(budget);
+    }
+
+    private void saveAll(final String message) {
+        saveAll(message, getExpenses(), getBudgets(), new Runnable() { public void run() {} });
+    }
+
+    private void saveAll(final String message, final List<Expense> expenseSnapshot,
+                         final List<Budget> budgetSnapshot, final Runnable commit) {
+        if (loadFailed) { Dialogs.message(this, "Saved data is unavailable. Use File > Retry load before editing.", "Load failed"); return; }
+        if (busy) { Dialogs.message(this, "A file operation is already in progress. Please retry.", "Save pending"); return; }
+        busy = true;
+        new Thread(new Runnable() { public void run() {
+            try {
+                expenseRepository.save(expenseSnapshot);
+                budgetRepository.save(budgetSnapshot);
+                EventQueue.invokeLater(new Runnable() { public void run() { commit.run(); busy = false; refreshAll(); status.setText(message + " Saved."); }});
+            } catch (final Exception exception) {
+                EventQueue.invokeLater(new Runnable() { public void run() {
+                    busy = false;
+                    Dialogs.error(MainFrame.this, message + " failed. Changes remain in memory; retry is available.", exception);
+                }});
+            }
+        }}, "SpendWise-save").start();
     }
 
     public void exportFiltered() {
-        JFileChooser chooser = new JFileChooser(); chooser.setDialogTitle("Export filtered expenses");
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        Path path = chooser.getSelectedFile().toPath();
-        if (Files.exists(path) && JOptionPane.showConfirmDialog(this, "Overwrite existing file?", "Confirm overwrite",
-                JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-        List<Expense> snapshot = expensesPanel.getFilteredExpenses();
-        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        new SwingWorker<Void, Void>() {
-            protected Void doInBackground() throws Exception {
-                try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
-                    writer.write("Date,Category,Note,Amount_INR\n");
-                    for (Expense e : snapshot) {
-                        writer.write(csv(e.getDate().toString()) + "," + csv(e.getCategory().getDisplayName()) + ","
-                                + csv(e.getNote()) + "," + e.getAmount().toPlainString() + "\n");
-                    }
-                }
-                return null;
+        FileDialog dialog = new FileDialog(this, "Export filtered expenses", FileDialog.SAVE);
+        dialog.setFile("expenses.csv"); dialog.setVisible(true);
+        if (dialog.getFile() == null) return;
+        Path path = Path.of(dialog.getDirectory(), dialog.getFile());
+        if (Files.exists(path) && !Dialogs.confirm(this, "Overwrite the existing file?", "Confirm overwrite")) return;
+        final List<Expense> snapshot = expensesPanel.getFilteredExpenses();
+        new Thread(new Runnable() { public void run() {
+            try (Writer writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+                writer.write("Date,Category,Note,Amount_INR\n");
+                for (Expense expense : snapshot) writer.write(CsvReportExporter.line(expense));
+                EventQueue.invokeLater(new Runnable() { public void run() { status.setText("CSV export completed."); }});
+            } catch (final IOException exception) {
+                EventQueue.invokeLater(new Runnable() { public void run() { Dialogs.error(MainFrame.this, "CSV export failed.", exception); }});
             }
-            protected void done() {
-                setCursor(Cursor.getDefaultCursor());
-                try { get(); JOptionPane.showMessageDialog(MainFrame.this, "CSV export completed."); }
-                catch (Exception ex) { showError("CSV export failed.", ex); }
-            }
-        }.execute();
-    }
-    private String csv(String value) {
-        if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r"))
-            return "\"" + value.replace("\"", "\"\"") + "\"";
-        return value;
+        }}, "SpendWise-export").start();
     }
 
     private void chooseBackup() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Save SpendWise backup");
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        Path path = chooser.getSelectedFile().toPath();
-        if (Files.exists(path) && JOptionPane.showConfirmDialog(this, "Overwrite existing backup?",
-                "Confirm overwrite", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-        try {
-            writeBackup(path, getExpenses(), getBudgets());
-            JOptionPane.showMessageDialog(this, "Backup saved successfully.");
-        } catch (IOException ex) {
-            showError("Backup failed.", ex);
-        }
+        FileDialog dialog = new FileDialog(this, "Save SpendWise backup", FileDialog.SAVE);
+        dialog.setFile("spendwise-backup.properties"); dialog.setVisible(true);
+        if (dialog.getFile() == null) return;
+        Path path = Path.of(dialog.getDirectory(), dialog.getFile());
+        if (Files.exists(path) && !Dialogs.confirm(this, "Overwrite this backup?", "Confirm overwrite")) return;
+        try { writeBackup(path, getExpenses(), getBudgets()); status.setText("Backup completed."); }
+        catch (IOException exception) { Dialogs.error(this, "Backup failed.", exception); }
     }
 
     private void chooseRestore() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Open SpendWise backup");
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
-        Path path = chooser.getSelectedFile().toPath();
-        List<Expense> originalExpenses = getExpenses();
-        List<Budget> originalBudgets = getBudgets();
+        FileDialog dialog = new FileDialog(this, "Restore SpendWise backup", FileDialog.LOAD);
+        dialog.setVisible(true); if (dialog.getFile() == null) return;
+        Path path = Path.of(dialog.getDirectory(), dialog.getFile());
         try {
-            Properties backup = new Properties();
-            try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) { backup.load(reader); }
-            List<Expense> restoredExpenses = readExpenses(backup);
-            List<Budget> restoredBudgets = readBudgets(backup);
-            if (JOptionPane.showConfirmDialog(this,
-                    "Restore replaces current expenses and budgets. Continue?", "Confirm restore",
-                    JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+            Properties properties = new Properties();
+            try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) { properties.load(reader); }
+            List<Expense> restoredExpenses = readExpenses(properties);
+            List<Budget> restoredBudgets = readBudgets(properties);
+            if (!Dialogs.confirm(this, "Restore replaces all current records. Continue?", "Confirm restore")) return;
             Path safety = path.resolveSibling(path.getFileName() + ".before-restore");
-            writeBackup(safety, originalExpenses, originalBudgets);
-            expenseRepository.save(restoredExpenses);
-            budgetRepository.save(restoredBudgets);
-            expenses.clear(); expenses.addAll(restoredExpenses);
-            budgets.clear(); budgets.addAll(restoredBudgets);
-            refreshAll();
-            JOptionPane.showMessageDialog(this, "Restore completed. Previous data was backed up to:\n" + safety);
-        } catch (Exception ex) {
-            try {
-                expenseRepository.save(originalExpenses);
-                budgetRepository.save(originalBudgets);
-            } catch (IOException rollbackError) {
-                ex.addSuppressed(rollbackError);
-            }
-            showError("Restore failed. Current data was restored from the in-memory snapshot.", ex);
-        }
+            writeBackup(safety, getExpenses(), getBudgets());
+            expenseRepository.save(restoredExpenses); budgetRepository.save(restoredBudgets);
+            expenses.clear(); expenses.addAll(restoredExpenses); budgets.clear(); budgets.addAll(restoredBudgets);
+            refreshAll(); status.setText("Restore completed. Safety backup: " + safety);
+        } catch (Exception exception) { Dialogs.error(this, "Restore failed. Current records were not replaced.", exception); }
     }
 
     private void writeBackup(Path path, List<Expense> expenseData, List<Budget> budgetData) throws IOException {
-        Properties backup = new Properties();
-        backup.setProperty("format", "SpendWise backup 1");
-        backup.setProperty("expense.count", Integer.toString(expenseData.size()));
+        Properties properties = new Properties();
+        properties.setProperty("format", "SpendWise backup 1");
+        properties.setProperty("expense.count", Integer.toString(expenseData.size()));
         for (int i = 0; i < expenseData.size(); i++) {
-            Expense expense = expenseData.get(i); String prefix = "expense." + i + ".";
-            backup.setProperty(prefix + "id", expense.getId().toString());
-            backup.setProperty(prefix + "amount", expense.getAmount().toPlainString());
-            backup.setProperty(prefix + "category", expense.getCategory().getDisplayName());
-            backup.setProperty(prefix + "date", expense.getDate().toString());
-            backup.setProperty(prefix + "note", expense.getNote());
+            Expense e = expenseData.get(i); String p = "expense." + i + ".";
+            properties.setProperty(p + "id", e.getId().toString()); properties.setProperty(p + "amount", e.getAmount().toPlainString());
+            properties.setProperty(p + "category", e.getCategory().getDisplayName()); properties.setProperty(p + "date", e.getDate().toString());
+            properties.setProperty(p + "note", e.getNote());
+            properties.setProperty(p + "essential", Boolean.toString(e.isEssential()));
+            properties.setProperty(p + "paymentMethod", e.getPaymentMethod().getDisplayName());
         }
-        backup.setProperty("budget.count", Integer.toString(budgetData.size()));
+        properties.setProperty("budget.count", Integer.toString(budgetData.size()));
         for (int i = 0; i < budgetData.size(); i++) {
-            Budget budget = budgetData.get(i); String prefix = "budget." + i + ".";
-            backup.setProperty(prefix + "month", budget.getMonth().toString());
-            backup.setProperty(prefix + "amount", budget.getAmount().toPlainString());
+            Budget b = budgetData.get(i); String p = "budget." + i + ".";
+            properties.setProperty(p + "month", b.getMonth().toString()); properties.setProperty(p + "amount", b.getAmount().toPlainString());
         }
-        try (Writer writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) { backup.store(writer, "SpendWise backup"); }
+        try (Writer writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            properties.store(writer, "SpendWise backup");
+        }
     }
 
-    private List<Expense> readExpenses(Properties backup) throws IOException {
-        List<Expense> result = new ArrayList<>();
-        int count = parseCount(backup, "expense.count");
+    private List<Expense> readExpenses(Properties p) throws IOException {
+        List<Expense> result = new ArrayList<Expense>(); int count = count(p, "expense.count");
+        if (!"SpendWise backup 1".equals(p.getProperty("format"))) throw new IOException("Unsupported backup format.");
+        Set<UUID> ids = new HashSet<UUID>();
         for (int i = 0; i < count; i++) {
-            String p = "expense." + i + ".";
+            String x = "expense." + i + ".";
             try {
-                java.math.BigDecimal amount = new java.math.BigDecimal(required(backup, p + "amount"));
-                spendwise.model.Category category = spendwise.model.Category.fromDisplayName(required(backup, p + "category"));
-                java.time.LocalDate date = java.time.LocalDate.parse(required(backup, p + "date"));
+                BigDecimal amount = new BigDecimal(required(p, x + "amount"));
+                spendwise.model.Category category = spendwise.model.Category.fromDisplayName(required(p, x + "category"));
+                java.time.LocalDate date = java.time.LocalDate.parse(required(p, x + "date"));
                 spendwise.service.ValidationService.validateExpenseValues(amount, category, date);
-                result.add(new Expense(UUID.fromString(required(backup, p + "id")), amount, category, date,
-                        backup.getProperty(p + "note", "")));
-            } catch (Exception ex) { throw new IOException("Invalid backup expense " + i, ex); }
+                UUID id = UUID.fromString(required(p, x + "id"));
+                if (!ids.add(id)) throw new IOException("Duplicate expense ID in backup.");
+                result.add(new Expense(id, amount, category, date, p.getProperty(x + "note", ""),
+                        Boolean.parseBoolean(p.getProperty(x + "essential", "false")),
+                        p.getProperty(x + "paymentMethod") == null ? spendwise.model.PaymentMethod.UNSPECIFIED
+                                : spendwise.model.PaymentMethod.fromDisplayName(p.getProperty(x + "paymentMethod"))));
+            } catch (Exception exception) { throw new IOException("Invalid backup expense " + i, exception); }
         }
         return result;
     }
-
-    private List<Budget> readBudgets(Properties backup) throws IOException {
-        List<Budget> result = new ArrayList<>();
-        int count = parseCount(backup, "budget.count");
+    private List<Budget> readBudgets(Properties p) throws IOException {
+        List<Budget> result = new ArrayList<Budget>(); int count = count(p, "budget.count");
+        Set<YearMonth> months = new HashSet<YearMonth>();
         for (int i = 0; i < count; i++) {
-            String p = "budget." + i + ".";
+            String x = "budget." + i + ".";
             try {
-                java.math.BigDecimal amount = new java.math.BigDecimal(required(backup, p + "amount"));
+                BigDecimal amount = new BigDecimal(required(p, x + "amount"));
                 spendwise.service.ValidationService.validateBudget(amount);
-                result.add(new Budget(YearMonth.parse(required(backup, p + "month")), amount));
-            } catch (Exception ex) { throw new IOException("Invalid backup budget " + i, ex); }
+                YearMonth month = YearMonth.parse(required(p, x + "month"));
+                if (!months.add(month)) throw new IOException("Duplicate budget month in backup.");
+                result.add(new Budget(month, amount));
+            } catch (Exception exception) { throw new IOException("Invalid backup budget " + i, exception); }
         }
         return result;
     }
-
-    private int parseCount(Properties properties, String key) throws IOException {
-        try { int count = Integer.parseInt(required(properties, key)); if (count < 0) throw new NumberFormatException(); return count; }
-        catch (NumberFormatException ex) { throw new IOException("Invalid backup count: " + key, ex); }
+    private int count(Properties p, String key) throws IOException {
+        try { int value = Integer.parseInt(required(p, key)); if (value < 0) throw new NumberFormatException(); return value; }
+        catch (NumberFormatException exception) { throw new IOException("Invalid count " + key, exception); }
     }
-
-    private String required(Properties properties, String key) throws IOException {
-        String value = properties.getProperty(key);
-        if (value == null) throw new IOException("Missing backup property: " + key);
-        return value;
+    private String required(Properties p, String key) throws IOException {
+        String value = p.getProperty(key); if (value == null) throw new IOException("Missing property " + key); return value;
     }
-
-    private void refreshAll() {
-        expensesPanel.refreshFilters();         dashboardPanel.refreshMonths(); budgetPanel.refresh(); reportsPanel.refreshMonths();
+    public void refreshAll() {
+        dashboard.refreshMonths(); expensesPanel.refreshFilters(); budgetPanel.refresh(); reportsPanel.refreshMonths();
     }
-    private void showError(String message, Exception ex) {
-        String detail = ex == null ? "" : "\n" + (ex.getCause() == null ? ex.getMessage() : ex.getCause().getMessage());
-        JOptionPane.showMessageDialog(this, message + detail, "SpendWise", JOptionPane.ERROR_MESSAGE);
-    }
+    public void setStatus(String message) { status.setText(message); }
 }

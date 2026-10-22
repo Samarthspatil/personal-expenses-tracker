@@ -8,17 +8,18 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 public final class ExpenseService {
     public BigDecimal calculateTotal(List<Expense> expenses, YearMonth month) {
-        return expenses.stream().filter(e -> e.getMonth().equals(month))
-                .map(Expense::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal total = BigDecimal.ZERO;
+        for (Expense expense : expenses) if (expense.getMonth().equals(month)) total = total.add(expense.getAmount());
+        return total;
     }
 
     public BigDecimal calculateTotal(List<Expense> expenses, YearMonth month, Category category) {
-        return expenses.stream().filter(e -> e.getMonth().equals(month) && e.getCategory() == category)
-                .map(Expense::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal total = BigDecimal.ZERO;
+        for (Expense expense : expenses) if (expense.getMonth().equals(month) && expense.getCategory() == category) total = total.add(expense.getAmount());
+        return total;
     }
 
     public Map<Category, BigDecimal> categoryTotals(List<Expense> expenses, YearMonth month) {
@@ -30,6 +31,8 @@ public final class ExpenseService {
     }
 
     public List<Expense> forMonth(List<Expense> expenses, YearMonth month) {
-        return expenses.stream().filter(e -> e.getMonth().equals(month)).collect(Collectors.toCollection(ArrayList::new));
+        List<Expense> result = new ArrayList<Expense>();
+        for (Expense expense : expenses) if (expense.getMonth().equals(month)) result.add(expense);
+        return result;
     }
 }

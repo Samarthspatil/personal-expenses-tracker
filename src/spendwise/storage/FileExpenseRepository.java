@@ -2,6 +2,7 @@ package spendwise.storage;
 
 import spendwise.model.Category;
 import spendwise.model.Expense;
+import spendwise.model.PaymentMethod;
 import spendwise.service.ValidationException;
 import spendwise.service.ValidationService;
 import java.io.IOException;
@@ -44,7 +45,11 @@ public final class FileExpenseRepository implements ExpenseRepository {
                 Category category = Category.fromDisplayName(required(properties, prefix + "category"));
                 LocalDate date = LocalDate.parse(required(properties, prefix + "date"));
                 ValidationService.validateExpenseValues(amount, category, date);
-                result.add(new Expense(id, amount, category, date, properties.getProperty(prefix + "note", "")));
+                boolean essential = Boolean.parseBoolean(properties.getProperty(prefix + "essential", "false"));
+                PaymentMethod payment = PaymentMethod.UNSPECIFIED;
+                String paymentText = properties.getProperty(prefix + "paymentMethod");
+                if (paymentText != null) payment = PaymentMethod.fromDisplayName(paymentText);
+                result.add(new Expense(id, amount, category, date, properties.getProperty(prefix + "note", ""), essential, payment));
             } catch (IllegalArgumentException | ValidationException ex) {
                 throw new IOException("Invalid expense record at index " + i + " in " + file, ex);
             }
@@ -64,6 +69,8 @@ public final class FileExpenseRepository implements ExpenseRepository {
             properties.setProperty(prefix + "category", expense.getCategory().getDisplayName());
             properties.setProperty(prefix + "date", expense.getDate().toString());
             properties.setProperty(prefix + "note", expense.getNote());
+            properties.setProperty(prefix + "essential", Boolean.toString(expense.isEssential()));
+            properties.setProperty(prefix + "paymentMethod", expense.getPaymentMethod().getDisplayName());
         }
         writeAtomically(properties);
     }

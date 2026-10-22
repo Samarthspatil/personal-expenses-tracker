@@ -1,6 +1,6 @@
 # SpendWise — Personal Expense Tracker
 
-SpendWise is a beginner-friendly offline Java Swing application for manually
+SpendWise is a beginner-friendly offline Java AWT application for manually
 recording expenses and monthly budgets in Indian rupees.
 
 ## Requirements and commands
@@ -31,15 +31,18 @@ SpendWise/
     Main.java
     model/       Expense, Budget, Category
     service/     validation and calculations
-    storage/     repository interfaces and properties-file repositories
-    ui/          Swing frame, panels, dialog, table model, UI helpers
+    storage/     file and H2 JDBC repositories
+    ui/          AWT frame, panels, dialogs, reports, and UI helpers
+  web/
+    src/         Jakarta Servlet monthly report
+    WEB-INF/     JSP and web.xml
   checks/LogicCheck.java
 ```
 
 ## Features and usage
 
 1. Start the application and use the left navigation for Dashboard, Expenses,
-   and Budget.
+   Budgets, and Reports.
 2. In Expenses, add an amount, category, date (`dd/MM/yyyy`), and optional
    note. Dates in the future, invalid dates, and invalid money are rejected
    without clearing the form.
@@ -54,23 +57,51 @@ SpendWise/
    month. Use File > Backup data or File > Restore data for complete
    plain-properties backups. Restore validates everything first, confirms the
    replacement, and writes a `.before-restore` safety backup.
+7. Expense dialogs now support Essential expense and Cash/UPI/Card payment
+   methods. Old records default to Unspecified. Expenses also support an
+   essential-only filter, minimum-amount scrollbar, double-click editing, and
+   Escape-to-cancel dialogs.
 
 ## Data files
 
-Data is stored under the documented folder:
+The authoritative desktop database is stored under:
 
 ```text
 %USERPROFILE%\SpendWiseData\
-  expenses.properties
-  budgets.properties
+  spendwise.mv.db
 ```
 
-The files are UTF-8 Java properties files containing a `count` and indexed
-records. Expense records preserve UUID, amount, category, ISO date, and note.
-Budget records preserve ISO `YearMonth` and amount. Missing files mean empty
-data. Loaded records are validated. Malformed files show an error and are not
-overwritten. Saves write a temporary file and then replace the target file
-atomically where the operating system supports it.
+The H2 database uses DECIMAL amounts and stores expense UUID, category, date,
+note, essential flag, payment method, and monthly budgets. The original
+`expenses.properties` and `budgets.properties` files remain readable. On the
+first database startup they are validated and imported; old records receive
+`essential=false` and `paymentMethod=Unspecified`. The original files are not
+deleted. If migration validation fails, the database is not marked migrated.
+
+Text exports and backup files remain UTF-8 properties/CSV files.
+
+## JDBC and web-module commands
+
+The project includes H2 `2.5.252` and Jakarta Servlet API `6.1.0` jars in
+`lib`. Compile the desktop:
+
+```powershell
+javac -encoding UTF-8 -cp "lib\h2-2.5.252.jar" -d out `
+  (Get-ChildItem src -Recurse -Filter *.java | ForEach-Object FullName)
+java -cp "out;lib\h2-2.5.252.jar" spendwise.Main
+```
+
+Compile the servlet for Tomcat 10.1:
+
+```powershell
+javac -encoding UTF-8 -cp "out;lib\h2-2.5.252.jar;lib\jakarta.servlet-api-6.1.0.jar" `
+  -d web\WEB-INF\classes (Get-ChildItem web\src -Recurse -Filter *.java | ForEach-Object FullName)
+```
+
+Deploy the `web` directory as a web application to Tomcat 10.1, and place
+`h2-2.5.252.jar` in Tomcat's shared/lib directory. The servlet uses
+`jakarta.servlet` consistently and reads the same H2 database. It exposes
+`/monthly-report` and forwards to `WEB-INF/monthly-report.jsp`.
 
 ## New enhancement notes
 
@@ -88,13 +119,14 @@ atomically where the operating system supports it.
 
 ## Existing API choices
 
-The original working version already used `BigDecimal`, `LocalDate`,
-`YearMonth`, `UUID`, streams, and `EnumMap`. They remain in place to preserve
-existing saved data and avoid a risky format migration. In particular, amounts
-remain decimal rupees in the existing `expenses.properties` format rather than
-being silently converted to paise. New enhancement code uses straightforward
-loops where practical. A future integer-paise migration would need an explicit
-versioned migration tool.
+The original working version already used `BigDecimal`, `LocalDate`, `YearMonth`,
+and `UUID` in its model and compatible properties files. Those established
+types remain in the model/storage layer so existing user data is not silently
+rewritten. In particular, amounts remain decimal rupees rather than being
+silently converted to paise. The migrated UI uses only AWT; its new filtering,
+dialogs, reports, and file operations use loops and named/anonymous listeners.
+A future integer-paise migration would need an explicit versioned migration
+tool.
 
 ## Feature-to-Java-syllabus mapping
 
@@ -102,14 +134,17 @@ versioned migration tool.
 |---|---|
 | `Expense`, `Budget`, `Category` | classes, constructors, encapsulation, enum |
 | `ExpenseRepository`, `BudgetRepository` | interfaces and overriding |
+| JDBC repositories | `Connection`, `PreparedStatement`, `ResultSet`, transactions |
 | `ExpenseService`, `BudgetService` | methods and method overloading |
 | `ArrayList`, `EnumMap`, loops and existing streams | collections and calculations |
 | `BigDecimal`, `LocalDate`, `YearMonth`, `UUID` | standard library value types |
-| Swing panels and `MainFrame` | inheritance through `JPanel`/`JFrame` |
+| AWT panels and `MainFrame` | inheritance through `Panel`/`Frame` |
 | button/filter listeners | AWT event handling |
-| `CardLayout`, `BorderLayout`, `GridBagLayout` | layout managers |
-| `SwingWorker` | background file work and GUI safety |
-| properties repositories | file I/O, readers/writers, try-with-resources |
+| `CardLayout`, `BorderLayout`, `GridLayout` | layout managers |
+| `Thread`, `EventQueue.invokeLater` | background file work and GUI safety |
+| properties repositories and migration | file I/O, readers/writers, try-with-resources |
+| AWT `Checkbox`, `CheckboxGroup`, `Scrollbar`, mouse/keyboard listeners | event handling |
+| Servlet/JSP module | servlet lifecycle, request forwarding, JSP presentation |
 | `ReportExporter`, text/CSV exporters | interfaces and overriding |
 | backup/restore properties | validation, file handling, exception recovery |
 | search and undo | string methods, collections, stable IDs |
@@ -138,10 +173,14 @@ versioned migration tool.
   and line breaks.
 - Create a backup, alter it to be malformed, verify restore refuses it, then
   restore a valid backup and confirm the `.before-restore` file exists.
+- Verify an old properties file imports once into H2 and that old records show
+  Unspecified payment method.
+- Test Essential only, minimum amount threshold/reset, double-click editing,
+  and Escape cancellation.
 
 ## Beginner-friendly class summary
 
-- `Main` starts Swing on the Event Dispatch Thread.
+- `Main` starts AWT on the Event Dispatch Thread.
 - `MainFrame` owns the current lists, navigation, background file operations,
   and refresh coordination.
 - `Expense` and `Budget` are the data objects; `Category` is the allowed list.
@@ -150,11 +189,11 @@ versioned migration tool.
 - Repository interfaces describe persistence; file repositories implement the
   UTF-8 properties format.
 - `ExpensesPanel`, `BudgetPanel`, and `DashboardPanel` are separate screens.
-- `ExpenseDialog` handles add/edit input, and `ExpenseTableModel` supplies
-  typed JTable values for chronological and numeric sorting.
+- `ExpenseDialog` handles add/edit input, and `java.awt.List` displays
+  readable expense summaries with a separate details area.
 
 ## Limitations
 
 This version intentionally has no login, bank connection, income tracking, AI,
-recurring expenses, database, or JavaFX. It is an offline desktop assignment
-application using local files.
+recurring expenses, database, or web UI. The interface is pure AWT and the
+application uses local files.

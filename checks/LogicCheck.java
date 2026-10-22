@@ -4,6 +4,7 @@ import spendwise.service.ExpenseService;
 import spendwise.service.ValidationException;
 import spendwise.service.ValidationService;
 import spendwise.storage.FileExpenseRepository;
+import spendwise.storage.JdbcExpenseRepository;
 import spendwise.ui.CsvReportExporter;
 import spendwise.ui.TextReportExporter;
 import java.math.BigDecimal;
@@ -34,6 +35,9 @@ public final class LogicCheck {
         repository.save(expenses);
         List<Expense> loaded = repository.load();
         check(loaded.size() == 2 && loaded.get(0).getNote().contains("\u2615"), "persistence Unicode round-trip");
+        JdbcExpenseRepository jdbc = new JdbcExpenseRepository(temp.resolve("jdbc"));
+        jdbc.save(expenses);
+        check(jdbc.load().size() == 2, "H2 JDBC round-trip");
         String csv = new CsvReportExporter().export(YearMonth.of(2025, 12), null, Arrays.asList(expenses.get(0)));
         check(csv.contains("\"Tea, \"\"special\"\" \u2615\""), "CSV escaping");
         check(new TextReportExporter().export(YearMonth.of(2025, 12), null,
